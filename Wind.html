@@ -1,0 +1,348 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+	<meta charset="utf-8">
+<link rel="icon">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+	<link rel="stylesheet" type="text/css" href="https://img.highcharts.com.cn/libs/font-awesome/css/font-awesome.min.css"/>
+	<script src="https://img.highcharts.com.cn/jquery/jquery-1.8.3.min.js"></script>
+	<script src="https://img.highcharts.com.cn/highcharts/highcharts.js"></script>
+	<script src="https://img.hcharts.cn/highcharts-plugins/highcharts-zh_CN.js"></script>
+</head>
+<body>
+	<div id="container" style="width: 800px; height: 310px; margin: 0 auto">
+	<div style="margin-top: 100px; text-align: center" id="loading">
+		<i class="fa fa-spinner fa-spin"></i> 从外部源加载数据
+	</div>
+</div>
+	<script>
+	
+function Meteogram(xml, container) {
+    this.windDirections = [];//风向
+    this.windDirectionNames = [];//风向name
+    this.windDirections =[];
+    this.windSpeeds = [];//风速
+    this.windSpeedNames = [];//风速name
+    this.xml = xml;
+    this.container = container;
+    this.parseYrData();
+}
+
+/**
+ * 鼠标悬停时的回调函数toolip提示工具
+ */
+Meteogram.prototype.tooltipFormatter = function (tooltip) {
+    // 参照时间间隔创建标题
+    var index = tooltip.points[0].point.index,
+        ret = '<small>' + Highcharts.dateFormat('%A, %b %e, %H:%M', tooltip.x) + '-' +
+        Highcharts.dateFormat('%H:%M', tooltip.points[0].point.to) + '</small><br>';
+    // 文字标识
+   
+    ret += '<table>';
+    // tooltip悬停显示
+  
+    // 风
+    ret += '<tr><td style="vertical-align: top">\u25CF 风向/风速：</td><td style="white-space:nowrap">' + this.windDirections[index] + '°'+
+        // '<br>' + this.windSpeedNames[index] + ' (' +
+       '/(' + Highcharts.numberFormat(this.windSpeeds[index].y, 1) + ' m/s)</td></tr>';
+    // Close
+    ret += '</table>';  
+    return ret;
+};
+
+/**
+ * 创建SVG可旋转的风速标识
+   0 无风  1软风  2轻风  3微风  4和风 5劲风  6强风  7疾风 8大风 9烈风 10狂风 11暴风 12飓风
+ */
+Meteogram.prototype.windArrow = function (name) {
+    var level,//风速等级
+        path;//绘制路径
+    path = [
+        'M', 0, 7, // base of arrow
+        'L', -1.5, 7,
+        0, 10,
+        1.5, 7,
+        0, 7,
+        0, -10, // top
+    ];
+    //根据windSpeedNames在数组里面的索引绘制风速拐角（英文作为模拟数据）
+    //模拟数据
+    level = $.inArray(name, ['平静', 'Fresh breeze', 'Light breeze', 'Light air', 'Gentle breeze',
+                             '清劲风', '大风', 'Moderate breeze', '狂风', '裂风', '暴风',
+                             '大风暴', '飓风']);
+    //正式环境 0 无风  1软风  2轻风  3微风  4和风 5劲风  6强风  7疾风 8大风 9烈风 10狂风 11暴风 12飓风
+    // level = $.inArray(name, [0,1,2,3,4,5,6,7,8,9,10,11,12]);                         
+    if (level === 0) {
+        path = [];
+    }
+    if (level === 2) {
+        path.push('M', 0, -8, 'L', 4, -8); // 短线
+    } else if (level >= 3) {
+        path.push(0, -10, 7, -10); // 长线
+    }
+    if (level === 4) {
+        path.push('M', 0, -7, 'L', 4, -7);
+    } else if (level >= 5) {
+        path.push('M', 0, -7, 'L', 7, -7);
+    }
+    if (level === 5) {
+        path.push('M', 0, -4, 'L', 4, -4);
+    } else if (level >= 6) {
+        path.push('M', 0, -4, 'L', 7, -4);
+    }
+    if (level === 7) {
+        path.push('M', 0, -1, 'L', 4, -1);
+    } else if (level >= 8) {
+        path.push('M', 0, -1, 'L', 7, -1);
+    }
+    return path;
+};
+/**
+ * 绘制风向箭头，路径由上面的windArrow返回path
+ */
+Meteogram.prototype.drawWindArrows = function (chart) {
+    var meteogram = this;
+    console.log(this);
+    $.each(chart.series[0].data, function (i, point) {
+        var sprite, arrow, x, y;
+        if (meteogram.resolution > 36e5 || i % 2 === 0) {
+            x = point.plotX + chart.plotLeft + 7;
+            y = 255;
+            if (meteogram.windSpeedNames[i] === 'Calm') {
+                arrow = chart.renderer.circle(x, y, 10).attr({
+                    fill: 'none'
+                });
+            } else {
+                //在表格中绘制path
+                arrow = chart.renderer.path(
+                    meteogram.windArrow(meteogram.windSpeedNames[i])
+                ).attr({
+                    //根据windDirections的值旋转
+                    rotation: parseInt(meteogram.windDirections[i], 10),
+                    translateX: x, // rotation center
+                    translateY: y // rotation center
+                });
+            }
+            arrow.attr({
+                stroke: (Highcharts.theme && Highcharts.theme.contrastTextColor) || 'black',
+                'stroke-width': 1.5,
+                zIndex: 5
+            })
+                .add();
+        }
+    });
+};
+
+/**
+ * 获取title地区
+ */
+Meteogram.prototype.getTitle = function () {
+    return 'Meteogram for ' + this.xml.location.name + ', ' + this.xml.location.country;
+};
+/**
+ * 生成并返回HighCharts配置参数
+ */
+Meteogram.prototype.getChartOptions = function () {
+    var meteogram = this;
+    return {
+        chart: {
+            renderTo: this.container,
+            marginBottom: 70,
+            marginRight: 40,
+            marginTop: 50,
+            plotBorderWidth: 1,
+            width: 800,
+            height: 310
+        },
+        title: {
+            text: this.getTitle(),
+            align: 'left'
+        },
+        credits: {
+           
+            href: this.xml.credit.link['@attributes'].url,
+            position: {
+                x: -40
+            }
+        },
+        tooltip: {
+            shared: true,
+            useHTML: true,
+            formatter: function () {
+                return meteogram.tooltipFormatter(this);
+            }
+        },
+        xAxis: [{ // 底部 X axis
+            type: 'datetime',
+            tickInterval: 2 * 36e5, // 两小时间隔
+            minorTickInterval: 36e5, // one hour
+            tickLength: 0,
+            gridLineWidth: 1,
+            gridLineColor: (Highcharts.theme && Highcharts.theme.background2) || '#F0F0F0',
+            startOnTick: false,
+            endOnTick: false,
+            minPadding: 0,
+            maxPadding: 0,
+            offset: 30,
+            showLastLabel: true,
+            labels: {
+                format: '{value:%H}'
+            }
+        }],
+        yAxis: [{ // 左侧风速 Y-axis
+            title: {
+                text: '风速（km/s）'
+            },
+            labels: {
+                format: '{value}',
+                style: {
+                    fontSize: '10px'
+                },
+                x: -3
+            },
+            plotLines: [{ // zero plane
+                value: 0,
+                color: '#BBBBBB',
+                width: 1,
+                zIndex: 2
+            }],
+           
+            maxPadding: 0.3,
+            tickInterval: 1,
+            gridLineColor: (Highcharts.theme && Highcharts.theme.background2) || '#F0F0F0'
+        }, { // precipitation axis
+            title: {
+                text: null
+            },
+            labels: {
+                enabled: false
+            },
+            gridLineWidth: 0,
+            tickLength: 0
+        }, 
+      
+        ],
+        legend: {
+			title: {
+				style: {
+					fontStyle: 'italic'
+				}
+			},
+			layout: 'vertical',
+			align: 'center',
+			verticalAlign: 'bottom',
+			x: -10,
+			y: 20
+		},
+        plotOptions: {
+            series: {
+                pointPlacement: 'between'
+            }
+        },
+        //表格曲线数据
+        series: [{
+            name: '风速',
+            data: this.windSpeeds,
+            type: 'spline',
+            marker: {
+                enabled: true,
+                states: {
+                    hover: {
+                        enabled: true
+                    }
+                }
+            },
+            tooltip: {
+                valueSuffix: '°C'
+            },
+            zIndex: 1,
+            color: '#6495ED',//曲线颜色
+            negativeColor: '#48AFE8'
+        },
+       
+      ]
+    }
+};
+/**
+ * 加载highcharts表格
+ */
+Meteogram.prototype.onChartLoad = function (chart) {
+    this.drawWindArrows(chart);
+    // console.log(chart);
+  
+};
+/**
+ * 异步创建highcharts
+ */
+Meteogram.prototype.createChart = function () {
+    var meteogram = this;
+    this.chart = new Highcharts.Chart(this.getChartOptions(), function (chart) {
+        meteogram.onChartLoad(chart);
+    });
+};
+/**
+ * 处理数据格式  在此获取后台数据改变遍历嵌套的层级即可(模拟数据源的层级结构xml.forecast.tabular.time)
+ */
+Meteogram.prototype.parseYrData = function () {
+    var meteogram = this,
+        xml = this.xml,
+        pointStart;
+    if (!xml || !xml.forecast) {
+        $('#loading').html('<i class="fa fa-frown-o"></i> 加载数据失败，请稍后再试');
+        return;
+    }
+    // 处理XML的日期格式
+    $.each(xml.forecast.tabular.time, function (i, time) {
+        // 事件格式转换
+        var from = time['@attributes'].from + ' UTC',
+            to = time['@attributes'].to + ' UTC';
+        from = from.replace(/-/g, '/').replace('T', ' ');
+        from = Date.parse(from);
+        to = to.replace(/-/g, '/').replace('T', ' ');
+        to = Date.parse(to);
+        if (to > pointStart + 4 * 24 * 36e5) {
+            return;
+        }
+        if (i === 0) {
+            meteogram.resolution = to - from;
+        }
+        // 填充数组
+        //风向风速
+        meteogram.windDirections.push(parseFloat(time.windDirection['@attributes'].deg));
+        meteogram.windDirectionNames.push(time.windDirection['@attributes'].name);
+        // meteogram.windDirections.push(time.windDirection['@attributes'].deg);
+       
+        meteogram.windSpeeds.push({
+            x: from,
+            to:to,
+            y: parseFloat(time.windSpeed['@attributes'].mps)
+        });
+        meteogram.windSpeedNames.push(time.windSpeed['@attributes'].name);
+      
+        if (i == 0) {
+            pointStart = (from + to) / 2;
+        }
+    });
+  
+    // 获取数据之后加载chart
+    this.createChart();
+};
+// Meteogram方法封装完毕
+//获取天气数据
+$(function () { 
+    if (!location.hash) {
+        var place = 'United_Kingdom/England/London';
+      
+        location.hash = 'http://www.yr.no/place/' + place + '/forecast_hour_by_hour.xml';
+    }
+    $.getJSON(
+        'https://www.highcharts.com/samples/data/jsonp.php?url=' + location.hash.substr(1) + '&callback=?',
+        function (xml) {
+            var meteogram = new Meteogram(xml, 'container');
+            console.log('数据来源',xml);
+        }
+    );
+});
+</script>
+</body>
+</html>
